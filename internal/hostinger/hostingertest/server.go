@@ -31,6 +31,8 @@
 //     fields of a 422
 //   - every answer carries the RateLimit headers (90 requests per minute);
 //     the fake never answers 429
+//   - two appends to one record set at the same moment both answered 200,
+//     and one of them was not saved; LoseWrites plays that back
 package hostingertest
 
 import (
@@ -83,6 +85,7 @@ type Fake struct {
 	zones   map[string][]RecordSet
 	calls   map[string]int
 	corrSeq int
+	lose    int // writes to answer 200 without saving them
 	// requests in the current rate limit window, for the RateLimit headers
 	windowStart time.Time
 	used        int
@@ -143,6 +146,15 @@ func (s *Fake) Seed(zone string, set RecordSet) {
 	s.zones[zone] = append(sets, set)
 }
 
+// LoseWrites makes the next n PUT or DELETE requests answer 200 without
+// changing anything. The real API did this to one of two appends sent to
+// the same record set at the same moment.
+func (s *Fake) LoseWrites(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lose = n
+}
+
 // RecordSets returns a copy of the record sets stored in zone.
 func (s *Fake) RecordSets(zone string) []RecordSet {
 	s.mu.Lock()
@@ -183,6 +195,12 @@ func (s *Fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	zone = strings.ToLower(zone)
 	if _, exists := s.zones[zone]; !exists {
 		s.errorLocked(w, http.StatusForbidden, fmt.Sprintf("[DNS:4002] Customer does not own %s domain", zone), nil)
+		return
+	}
+
+	if s.lose > 0 && (r.Method == http.MethodPut || r.Method == http.MethodDelete) {
+		s.lose--
+		writeJSON(w, http.StatusOK, map[string]string{"message": "Request accepted"})
 		return
 	}
 

@@ -86,6 +86,15 @@ func IsNotOwned(err error) bool {
 		strings.Contains(apiErr.Body, "[DNS:4002]")
 }
 
+// IsConflict reports whether err is the 422 [DNS:4008] the API returns when
+// a value is not valid or conflicts with another one, for example when an
+// append (overwrite=false) sends a value the record set already has.
+func IsConflict(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusUnprocessableEntity &&
+		strings.Contains(apiErr.Body, "[DNS:4008]")
+}
+
 // Client is a minimal client for the Hostinger DNS zone API.
 type Client struct {
 	baseURL    string
